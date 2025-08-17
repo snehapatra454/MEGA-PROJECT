@@ -1,20 +1,35 @@
-//require('dotenv').config({path: './env'})
-import dotenv from "dotenv"
-// import mongoose from "mongoose";
-// import { DB_NAME } from "./constants"
-import connectDB from "./db/index.js";
+/**
+ * Main entry point for the video streaming application
+ * Sets up the Express server and establishes database connection
+ * 
+ * Required packages:
+ * - dotenv: Environment variable management
+ * - express: Web framework for Node.js
+ */
 
+// Import required modules
+import dotenv from "dotenv" // npm install dotenv
+import connectDB from "./db/index.js";
+import express from "express"; // npm install express
+
+// Create Express application instance
+const app = express()
+
+// Load environment variables from .env file
 dotenv.config({
     path: './env'
 })
 
+// Connect to MongoDB database and start the server
 connectDB()
 .then(() => {
+    // Start server on specified port or default to 8000
     app.listen(process.env.PORT || 8000, () => {
         console.log(`Server is running at port: ${process.env.PORT}`);
     })
 })
 .catch((err) => {
+    // Handle database connection errors
     console.log("MONGODB connection failed !!!",err);
 })
 
