@@ -10,10 +10,7 @@
 // Import required modules
 import dotenv from "dotenv" // npm install dotenv
 import connectDB from "./db/index.js";
-import express from "express"; // npm install express
-
-// Create Express application instance
-const app = express()
+import {app} from "./app.js"; // Import configured Express app
 
 // Load environment variables from .env file
 dotenv.config({
