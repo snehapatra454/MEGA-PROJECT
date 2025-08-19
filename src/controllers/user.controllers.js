@@ -31,60 +31,77 @@ const registerUser = asyncHandler(async (req, res) => {
    // check for user creation
    // return response
 
-   const { fullName, email, userName, password } = req.body
-   console.log("email", email);
+   // Debug logs to see incoming data
+   console.log("Request body:", req.body);
+   console.log("Files:", req.files);
+   
+   // Extract user details from request body (form-data)
+   const { fullName, email, username, password } = req.body || {}
 
-//    if(fullName === ""){
-//     throw new ApiError(400, "Full name is required")
-//    }
+    // Validate that all required fields are provided and not empty
     if (
-        [fullName, email, userName, password].some((field) => field?.trim() === "")
+        [fullName, email, username, password].some((field) => 
+            field === undefined || field === null || field?.trim() === "")
     ){
-        throw new ApiError(400, "Full name is required")
+        throw new ApiError(400, "All fields are required")
     }
 
-    const existedUser = User.findOne({
-        $or: [{ username: userName },{ email }]
+    // Check if user already exists with same username or email
+    const existedUser = await User.findOne({
+        $or: [{ username },{ email }] // MongoDB $or operator for multiple conditions
     })
 
     if(existedUser) {
         throw new ApiError(409, "User with email or username already exists")
     }
 
-    //req.body access has alerady given by the express but multer provides req.files 
+    // Extract file paths from multer processed files
+    // Avatar is required, coverImage is optional
     const avatarLocalPath = req.files?.avatar[0]?.path;
-    const coverImageLocalPath = req.files?.coverImage[0]?.path;
+    
+    // Handle optional cover image with safe checking
+    let coverImageLocalPath;
+    if(req.files && Array.isArray(req.files.coverImage) && req.files.coverImage.length > 0){
+        coverImageLocalPath = req.files.coverImage[0].path
+    }
 
+    // Validate that avatar file is provided (required field)
     if(!avatarLocalPath){
         throw new ApiError(400, "Avatar file is required")
     }
 
+    // Upload files to Cloudinary cloud storage
     const avatar = await uploadOnCloudinary(avatarLocalPath)
-    const coverImage = await uploadOnCloudinary(coverImageLocalPath)
+    const coverImage = await uploadOnCloudinary(coverImageLocalPath) // Will be null if no file
 
+    // Ensure avatar upload was successful
     if(!avatar){
         throw new ApiError(400, "Avatar file is required")
     }
 
-    const user = User.create({
-        fullName,
-        avatar: avatar.url,
-        coverImage: coverImage?.url || "",
+    // Create new user in database
+    const user = await User.create({
+        fullname: fullName, // Map camelCase to lowercase for schema
+        avatar: avatar.url, // Cloudinary URL
+        coverImage: coverImage?.url || "", // Optional field, empty string if no image
         email,
-        password,
-        username: userName.toLowerCase()
+        password, // Will be hashed by pre-save middleware
+        username: username.toLowerCase() // Ensure lowercase for consistency
     })
-    const createdUser = User.findById(user._id).select(
-        "-password -refreshToken"
+    // Fetch created user without sensitive fields
+    const createdUser = await User.findById(user._id).select(
+        "-password -refreshToken" // Exclude password and refresh token from response
     )
 
+    // Verify user was created successfully
     if(!createdUser){
         throw new ApiError(500, "Something went wrong while registering the user")
     }
     
+    // Return success response with user data
     return res.status(201).json(
         new ApiResponse(200, createdUser, "User registered Successfully")
-    ))
+    )
 })
 
 export {registerUser}
