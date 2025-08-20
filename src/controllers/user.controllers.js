@@ -11,24 +11,40 @@ import { ApiError } from "../utils/ApiError.js" // Custom API error class
 import { User } from "../models/user.model.js" // User model
 import { uploadOnCloudinary } from "../utils/cloudinary.js" // Cloudinary utility for file uploads
 import { ApiResponse } from "../utils/ApiResponse.js" // Custom API response utility
+import * as jwt from 'jsonwebtoken'
 /**
  * Register a new user
  * @route POST /api/v1/users/register
  * @access Public
  */
 
+/**
+ * Generates JWT access and refresh tokens for a user
+ * @param {string} userId - MongoDB ObjectId of the user
+ * @returns {Object} Object containing accessToken and refreshToken
+ */
 const generateAccessAndRefreshTokens = async(userId) =>{
     try {
+        // Find user by ID in database
         const user = await User.findById(userId)
-        const accessToken = user.generateAccessToken()
-        const refreshToken = user.generateRefreshToken()
+        if (!user) {
+            throw new Error("User not found")
+        }
+        
+        console.log("Generating tokens for user:", user._id)
+        
+        // Generate JWT tokens using user model methods
+        const accessToken = user.generateAccessToken() // Short-lived token for API access
+        const refreshToken = user.generateRefreshToken() // Long-lived token for refreshing access
 
+        // Save refresh token to database for validation during refresh
         user.refreshToken = refreshToken
-        await user.save({ validateBeforeSave: false })
+        await user.save({ validateBeforeSave: false }) // Skip validation for performance
 
         return {accessToken, refreshToken}
 
     } catch (error) {
+        console.log("Token generation error:", error)
         throw new ApiError(500, "Something went wrong while generating refresh and access token")
     }
 }
@@ -123,79 +139,188 @@ const registerUser = asyncHandler(async (req, res) => {
 })
 
 
+/**
+ * Authenticate user and generate login session
+ * @route POST /api/v1/users/login
+ * @access Public
+ */
 const loginUser = asyncHandler(async (req,res) => {
-    // req body -> data
-    // username or email
-    //find the user
-    //password check
-    //access and refresh token
-    //send cookie
-    
+    /**
+     * Login Process:
+     * 1. Extract credentials from request body
+     * 2. Validate username/email and password are provided
+     * 3. Find user in database by username or email
+     * 4. Verify password using bcrypt comparison
+     * 5. Generate JWT access and refresh tokens
+     * 6. Set secure HTTP-only cookies
+     * 7. Return user data and tokens
+     */
 
+    // Extract login credentials from request body
     const {email, username, password} = req.body
+    
+    // Validate that either username or email is provided
     if (!username && !email) {
         throw new ApiError(400, "username or email is required")
     }
     
+    // Find user by username OR email using MongoDB $or operator
     const user = await User.findOne({
         $or: [{username}, {email}]
     })
 
+    // Check if user exists in database
     if (!user) {
         throw new ApiError(404, "User does not exist")
     }
 
+    // Verify password using bcrypt comparison method from user model
     const isPasswordValid = await user.isPasswordCorrect(password)
 
     if (!isPasswordValid) {
         throw new ApiError(401, "Invalid credentials")
     }
 
-    const {accessToken , refreshToken} = await
-    generateAccessAndRefreshTokens(user._id);
+    // Generate JWT tokens for authenticated user
+    const {accessToken, refreshToken} = await generateAccessAndRefreshTokens(user._id);
 
+    // Fetch user data without sensitive fields for response
     const LoggedInUser = await User.findById(user._id).select("-password -refreshToken")
 
+    // Cookie configuration for secure token storage
     const options = {
-        httpOnly: true,
-        secure: true
+        httpOnly: true, // Prevent XSS attacks by making cookies inaccessible to JavaScript
+        secure: req.protocol === 'https' // Dynamic: true for HTTPS, false for HTTP
     }
+    
+    // Send response with cookies and user data
     return res
     .status(200)
-    .cookie("accessToken", accessToken, options)
-    .cookie("refreshToken", refreshToken, options)
+    .cookie("accessToken", accessToken, options) // Set access token cookie
+    .cookie("refreshToken", refreshToken, options) // Set refresh token cookie
     .json(
         new ApiResponse(
             200, 
             {
-                user: LoggedInUser, accessToken, refreshToken
+                user: LoggedInUser, 
+                accessToken, 
+                refreshToken
             },
             "User logged in successfully"
         )
     )
 })
 
+/**
+ * Logout user and invalidate session
+ * @route POST /api/v1/users/logout
+ * @access Private (requires authentication)
+ */
 const logoutUser = asyncHandler(async(req,res) => {
+    /**
+     * Logout Process:
+     * 1. Remove refresh token from database (invalidate session)
+     * 2. Clear HTTP-only cookies from browser
+     * 3. Return success response
+     * Note: req.user is available because of verifyJWT middleware
+     */
+
+    // Remove refresh token from database to invalidate user session
     await User.findByIdAndUpdate(
-        req.user._id,
+        req.user._id, // User ID from JWT middleware
         {
             $set: {
-                refreshToken: undefined
+                refreshToken: undefined // Clear refresh token
             }
         },
         {
-            new: true
+            new: true // Return updated document
         }
     )
+    
+    // Cookie configuration matching login settings
     const options = {
-        httpOnly: true,
-        secure: true
+        httpOnly: true, // Prevent XSS attacks
+        secure: req.protocol === 'https' // Dynamic: true for HTTPS, false for HTTP
     }
 
+    // Clear cookies and send success response
     return res
     .status(200)
-    .clearCookie("accessToken", options)
-    .clearCookie("refreshToken", options)
+    .clearCookie("accessToken", options) // Remove access token cookie
+    .clearCookie("refreshToken", options) // Remove refresh token cookie
     .json(new ApiResponse(200, {}, "User logged Out"))
 })
-export {registerUser,loginUser,logoutUser}
+
+/**
+ * Refresh expired access token using valid refresh token
+ * @route POST /api/v1/users/refresh-token
+ * @access Public (but requires valid refresh token)
+ */
+const refreshAccessToken = asyncHandler(async(req, res) => {
+    /**
+     * Token Refresh Process:
+     * 1. Extract refresh token from cookies or request body
+     * 2. Verify refresh token is provided
+     * 3. Decode and validate refresh token using JWT
+     * 4. Find user associated with the token
+     * 5. Compare incoming token with stored token in database
+     * 6. Generate new access and refresh token pair
+     * 7. Update cookies and return new tokens
+     */
+
+    // Extract refresh token from cookies (preferred) or request body (fallback)
+    const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken
+
+    // Validate that refresh token is provided
+    if(!incomingRefreshToken){
+        throw new ApiError(401, "unauthorized request")
+    }
+
+    try {
+        // Verify and decode the refresh token using JWT secret
+        const decodedToken = jwt.verify(
+            incomingRefreshToken,
+            process.env.REFRESH_TOKEN_SECRET
+        )
+
+        // Find user associated with the decoded token
+        const user = await User.findById(decodedToken?._id)
+
+        if(!user){
+            throw new ApiError(401, "Invalid refresh token")
+        }
+
+        // Security check: Compare incoming token with stored token in database
+        // This prevents token reuse attacks
+        if(incomingRefreshToken !== user?.refreshToken){
+            throw new ApiError(401, "Refresh token is expired or used")
+        }
+
+        // Cookie configuration for new tokens
+        const options = {
+            httpOnly: true, // Prevent XSS attacks
+            secure: req.protocol === 'https' // Dynamic: true for HTTPS, false for HTTP
+        }
+
+        // Generate new token pair (both access and refresh tokens)
+        const {accessToken, refreshToken: newRefreshToken} = await generateAccessAndRefreshTokens(user._id)
+
+        // Send response with new tokens in cookies and response body
+        return res
+        .status(200)
+        .cookie("accessToken", accessToken, options) // Set new access token cookie
+        .cookie("refreshToken", newRefreshToken, options) // Set new refresh token cookie
+        .json(
+            new ApiResponse(
+                200,
+                {accessToken, refreshToken: newRefreshToken},
+                "Access token refreshed"
+            )
+        )
+    } catch (error) {
+        // Handle JWT verification errors or other token-related issues
+        throw new ApiError(401, error?.message || "Invalid refresh token")
+    }
+})
+export {registerUser,loginUser,logoutUser,refreshAccessToken}
