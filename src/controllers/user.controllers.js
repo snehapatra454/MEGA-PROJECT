@@ -324,79 +324,145 @@ const refreshAccessToken = asyncHandler(async(req, res) => {
     }
 })
 
+/**
+ * Change user's current password
+ * @route POST /api/v1/users/change-password
+ * @access Private (requires authentication)
+ */
 const changeCurrentPassword = asyncHandler(async(req, res) => {
+    /**
+     * Password Change Process:
+     * 1. Extract old and new passwords from request body
+     * 2. Find authenticated user in database
+     * 3. Verify old password is correct
+     * 4. Update password (will be hashed by pre-save middleware)
+     * 5. Return success response
+     */
+
+    // Extract passwords from request body
     const {oldPassword, newPassword} = req.body
 
+    // Find user by ID (available from JWT middleware)
     const user = await User.findById(req.user?._id)
+    
+    // Verify current password using bcrypt comparison
     const isPasswordCorrect = await user.isPasswordCorrect(oldPassword)
 
     if(!isPasswordCorrect){
         throw new ApiError(400, "Invalid old password")
     }
 
+    // Update password (will be automatically hashed by pre-save middleware)
     user.password = newPassword
-    await user.save({validateBeforeSave: false})
+    await user.save({validateBeforeSave: false}) // Skip validation for performance
 
     return res
     .status(200)
     .json(new ApiResponse(200, {}, "Password changed successfully"))
 })
 
+/**
+ * Get current authenticated user's profile
+ * @route GET /api/v1/users/current-user
+ * @access Private (requires authentication)
+ */
 const getCurrentUser = asyncHandler(async(req, res) => {
+    /**
+     * Get Current User Process:
+     * 1. Return user data from JWT middleware (req.user)
+     * Note: User data is already available from verifyJWT middleware
+     * No database query needed as user is already fetched and attached to req
+     */
+
+    // Return user data (already fetched by verifyJWT middleware)
     return res
     .status(200)
     .json(new ApiResponse(
         200,
-        req.user,
+        req.user, // User data from JWT middleware (excludes password & refreshToken)
         "Current user fetched successfully"
     ))
 })
 
+/**
+ * Update user's account details (name and email)
+ * @route PATCH /api/v1/users/update-account
+ * @access Private (requires authentication)
+ */
 const updateAccountDetails = asyncHandler(async(req, res) => {
+    /**
+     * Account Update Process:
+     * 1. Extract fullName and email from request body
+     * 2. Validate required fields are provided
+     * 3. Update user document in database
+     * 4. Return updated user data (excluding password)
+     */
+
+    // Extract account details from request body
     const {fullName, email} = req.body
 
+    // Validate required fields
     if(!fullName || !email){
         throw new ApiError(400, "All fields are required")
     }
 
-    const user = User.findByIdAndUpdate(
-        req.user?._id,
+    // Update user account details in database
+    const user = await User.findByIdAndUpdate(
+        req.user?._id, // User ID from JWT middleware
         {
             $set: {
-                fullName,
+                fullname: fullName, // Map to schema field name
                 email: email
             }
         },
-        {new: true}
-        ).select("-password")
+        {new: true} // Return updated document
+        ).select("-password") // Exclude password from response
 
     return res
     .status(200)
     .json(new ApiResponse(200, user, "Account details updated successfully"))
 })
 
+/**
+ * Update user's avatar image
+ * @route PATCH /api/v1/users/avatar
+ * @access Private (requires authentication)
+ */
 const updateUserAvatar = asyncHandler(async(req, res) => {
+    /**
+     * Avatar Update Process:
+     * 1. Extract avatar file from multer middleware
+     * 2. Validate file is provided
+     * 3. Upload file to Cloudinary
+     * 4. Update user's avatar URL in database
+     * 5. Return updated user data
+     * TODO: Delete old avatar from Cloudinary to save storage
+     */
+
+    // Extract file path from multer middleware (single file upload)
     const avatarLocalPath = req.file?.path
 
     if(!avatarLocalPath){
         throw new ApiError(400, "Avatar file is missing")
     }
 
+    // Upload new avatar to Cloudinary
     const avatar = await uploadOnCloudinary(avatarLocalPath)
 
     if(!avatar.url){
         throw new ApiError(400, "Error while uploading avatar")
     }
 
+    // Update user's avatar URL in database
     const user = await User.findByIdAndUpdate(
-        req.user?._id,
+        req.user?._id, // User ID from JWT middleware
         {
             $set:{
-                avatar: avatar.url
+                avatar: avatar.url // New Cloudinary URL
             }
         },
-        {new: true}
-    ).select("-password")
+        {new: true} // Return updated document
+    ).select("-password") // Exclude password from response
 
     return res
     .status(200)
@@ -405,28 +471,46 @@ const updateUserAvatar = asyncHandler(async(req, res) => {
     )
 })
 
+/**
+ * Update user's cover image
+ * @route PATCH /api/v1/users/cover-image
+ * @access Private (requires authentication)
+ */
 const updateUserCoverImage = asyncHandler(async(req, res) => {
+    /**
+     * Cover Image Update Process:
+     * 1. Extract cover image file from multer middleware
+     * 2. Validate file is provided
+     * 3. Upload file to Cloudinary
+     * 4. Update user's cover image URL in database
+     * 5. Return updated user data
+     * TODO: Delete old cover image from Cloudinary to save storage
+     */
+
+    // Extract file path from multer middleware (single file upload)
     const coverImageLocalPath = req.file?.path
 
     if(!coverImageLocalPath){
         throw new ApiError(400, "Cover image file is missing")
     }
 
+    // Upload new cover image to Cloudinary
     const coverImage = await uploadOnCloudinary(coverImageLocalPath)
 
     if(!coverImage.url){
         throw new ApiError(400, "Error while uploading cover image")
     }
 
+    // Update user's cover image URL in database
     const user = await User.findByIdAndUpdate(
-        req.user?._id,
+        req.user?._id, // User ID from JWT middleware
         {
             $set:{
-                coverImage: coverImage.url
+                coverImage: coverImage.url // New Cloudinary URL
             }
         },
-        {new: true}
-    ).select("-password")
+        {new: true} // Return updated document
+    ).select("-password") // Exclude password from response
 
     return res
     .status(200)
