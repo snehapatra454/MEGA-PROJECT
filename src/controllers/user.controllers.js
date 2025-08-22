@@ -518,6 +518,145 @@ const updateUserCoverImage = asyncHandler(async(req, res) => {
         new ApiResponse(200, user, "Cover image updated successfully")
     )
 })
+
+/**
+ * Get user channel profile with subscription statistics
+ * @route GET /api/v1/users/c/:username
+ * @access Public (can be viewed by anyone)
+ */
+const getUserChannelProfile = asyncHandler(async(req, res) => {
+    /**
+     * Channel Profile Retrieval Process:
+     * 1. Extract username from URL parameters
+     * 2. Validate username is provided
+     * 3. Use MongoDB aggregation pipeline to:
+     *    - Find user by username
+     *    - Join with subscriptions to get subscriber list
+     *    - Join with subscriptions to get channels user subscribes to
+     *    - Calculate subscriber count and subscription count
+     *    - Check if current user is subscribed to this channel
+     * 4. Return enriched channel profile data
+     */
+
+    // Extract username from URL parameters
+    const {username} = req.params
+
+    // Validate that username is provided and not empty
+    if(!username?.trim()){
+        throw new ApiError(400, "Username is missing")
+    }
+
+    // MongoDB aggregation pipeline to get channel profile with subscription data
+    const channel = await User.aggregate([
+        {
+            // Stage 1: Find user by username (case-insensitive)
+            $match: {username: username.toLowerCase()}
+        },
+        {
+            // Stage 2: Join with subscriptions collection to get all subscribers
+            $lookup: {
+                from: "subscriptions", // Collection name in MongoDB (plural)
+                localField: "_id", // User's _id field
+                foreignField: "channel", // subscription's channel field
+                as: "subscribers" // Output array containing subscriber documents
+            }
+        },
+        {
+            // Stage 3: Join with subscriptions to get channels this user subscribes to
+            $lookup: {
+                from: "subscriptions", // Collection name in MongoDB
+                localField: "_id", // User's _id field
+                foreignField: "subscriber", // subscription's subscriber field
+                as: "subscribedTo" // Output array containing subscription documents
+            }
+        },
+        {
+            // Stage 4: Add computed fields for counts and subscription status
+            $addFields: {
+                subscribersCount: { $size: "$subscribers" }, // Total number of subscribers
+                channelsSubscribedToCount: { $size: "$subscribedTo" }, // Total channels subscribed to
+                isSubscribed: {
+                    // Check if current authenticated user is subscribed to this channel
+                    $cond: {
+                        if: { $in: [req.user?._id, "$subscribers.subscriber"] },
+                        then: true, // Current user is subscribed
+                        else: false // Current user is not subscribed
+                    }
+                }
+            }
+        },
+        {
+            // Stage 5: Remove sensitive fields and unnecessary arrays from response
+            $project: {
+                fullname: 1,
+                username: 1,
+                subscribersCount: 1,
+                channelsSubscribedToCount: 1,
+                isSubscribed: 1,
+                avatar: 1,
+                coverImage: 1,
+                email: 1,
+                createdAt: 1
+            }
+        }
+    ])
+
+    // Check if channel exists
+    if(!channel?.length){
+        throw new ApiError(404, "Channel does not exist")
+    }
+
+    // Return channel profile data (aggregation returns array, so use first element)
+    return res
+    .status(200)
+    .json(new ApiResponse(200, channel[0], "Channel profile fetched successfully"))
+})
+
+const getWatchHistory = asyncHandler(async(req, res) => {
+    const user = await User.aggregate([
+        {
+            $match: {
+                _id: new mongoose.Types.ObjectId(req.user._id) // Match user by ID
+            }
+        },
+        {
+            $lookup: {
+                from: "videos", // Collection name in MongoDB
+                localField: "watchHistory", // Field in User model containing video IDs
+                foreignField: "_id", // Field in Video model to match against
+                as: "watchHistory", // Output array containing video documents
+                pipeline: [ // Sub-pipeline to further process video documents
+                    {
+                        $lookup: {
+                            from: "users", // Collection name in MongoDB
+                            localField: "owner", // Field in Video model containing owner ID
+                            foreignField: "_id", // Field in User model to match against
+                            as: "owner", // Output array containing owner document
+                            pipeline: [ // Sub-pipeline to further process owner document
+                                {
+                                    $project: {
+                                        fullname: 1, // Include fullname field
+                                        username: 1, // Include username field
+                                        avatar: 1 // Include avatar field
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        $addFields: {
+                            owner: { $first: "$owner" } // Get the first (and only) owner document
+                        }
+                    }
+                ]
+            }
+        }
+    ])
+    // Return watch history data
+    return res
+        .status(200)
+        .json(new ApiResponse(200, user[0].watchHistory, "Watch history fetched successfully"))
+})
 export {registerUser,
         loginUser,
         logoutUser,
@@ -525,4 +664,6 @@ export {registerUser,
         changeCurrentPassword,
         getCurrentUser,updateAccountDetails,
         updateUserAvatar,
-        updateUserCoverImage} // Export all functions for use in other parts of the application
+        updateUserCoverImage,
+        getUserChannelProfile,
+        getWatchHistory} // Export all functions for use in other parts of the application
