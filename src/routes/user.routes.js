@@ -7,7 +7,18 @@
  */
 
 import {Router} from "express" // npm install express
-import { loginUser, logoutUser, registerUser, refreshAccessToken } from "../controllers/user.controllers.js"
+import { loginUser, 
+         logoutUser,
+         registerUser,
+         refreshAccessToken,
+         changeCurrentPassword,
+         getCurrentUser,
+         updateAccountDetails,
+         updateUserAvatar,
+         updateUserCoverImage,
+         getUserChannelProfile,
+         getWatchHistory
+        } from "../controllers/user.controllers.js"
 import {upload} from "../middlewares/multer.middleware.js"
 import { verifyJWT } from "../middlewares/auth..middleware.js"
 
@@ -40,4 +51,41 @@ router.route("/logout").post(
     logoutUser // Controller function to handle logout logic
 )
 
+router.route("/change-password").post(
+    verifyJWT, // Middleware to verify JWT token and authenticate user
+    // Controller function to change user password (not shown in this snippet)
+    changeCurrentPassword // Controller function to change user password
+)
+
+router.route("/current-user").get(
+    verifyJWT, // Middleware to verify JWT token and authenticate user
+    getCurrentUser // Controller function to fetch current user details
+)
+
+router.route("/update-account").patch(
+    verifyJWT, // Middleware to verify JWT token and authenticate user
+    updateAccountDetails // Controller function to update user account details
+)
+
+router.route("/avatar").patch(
+    verifyJWT, // Middleware to verify JWT token and authenticate user
+    upload.single("avatar"), // Multer middleware to handle single file upload (avatar)
+    updateUserAvatar // Controller function to update user avatar
+)
+
+router.route("/cover-image").patch(
+    verifyJWT, // Middleware to verify JWT token and authenticate user
+    upload.single("coverImage"), // Multer middleware to handle single file upload (cover image)
+    updateUserCoverImage // Controller function to update user cover image
+)
+
+router.route("/c/:username").get(
+    verifyJWT, // Middleware to verify JWT token and authenticate user
+    getUserChannelProfile // Controller function to fetch user channel profile
+)
+
+router.route("/history").get(
+    verifyJWT, // Middleware to verify JWT token and authenticate user
+    getWatchHistory // Controller function to fetch user watch history
+)
 export default router
