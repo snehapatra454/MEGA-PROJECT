@@ -11,7 +11,8 @@ import { ApiError } from "../utils/ApiError.js" // Custom API error class
 import { User } from "../models/user.model.js" // User model
 import { uploadOnCloudinary } from "../utils/cloudinary.js" // Cloudinary utility for file uploads
 import { ApiResponse } from "../utils/ApiResponse.js" // Custom API response utility
-import * as jwt from 'jsonwebtoken'
+import jwt from 'jsonwebtoken'
+import mongoose from 'mongoose' // MongoDB object modeling for Node.js
 /**
  * Register a new user
  * @route POST /api/v1/users/register
@@ -340,7 +341,12 @@ const changeCurrentPassword = asyncHandler(async(req, res) => {
      */
 
     // Extract passwords from request body
-    const {oldPassword, newPassword} = req.body
+    const {oldPassword, newPassword} = req.body || {}
+
+    // Validate required fields
+    if (!oldPassword || !newPassword) {
+        throw new ApiError(400, "Old password and new password are required")
+    }
 
     // Find user by ID (available from JWT middleware)
     const user = await User.findById(req.user?._id)
